@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+uploads/
+secrets/
+*service-account*.json
+*service_account*.json
+*.pem
+*.key
+*.p12
+*.log
+*.tsbuildinfo
