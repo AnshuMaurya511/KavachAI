@@ -11,6 +11,10 @@ import { fileTypeFromBuffer } from "file-type";
 import { prisma } from "./db.js";
 import { clearSessionCookie, requireAuth, requireAdmin, setSessionCookie } from "./middleware/auth.js";
 import { deleteEvidence, DriveStorageError, readEvidence, saveEvidence, storageProvider, verifyDriveConnection } from "./services/storage.js";
+import { createServer } from "node:http";
+import { createSosAlertRouter } from "./routes/sosAlerts.js";
+import { createSosRealtime } from "./services/sosRealtime.js";
+import { setAdminSosNotifier } from "./services/sosRealtimeState.js";
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -38,6 +42,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use("/api/auth", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
+app.use("/api/sos", createSosAlertRouter());
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "recoverx-api", storage: storageProvider() }));
 app.get("/api/admin/storage/health", requireAuth, requireAdmin, async (_req, res, next) => {
   try {
@@ -322,6 +327,9 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // Vercel imports this Express app as a serverless function. Local development starts a listener.
 export default app;
 if (!process.env.VERCEL) {
-  app.listen(port, () => console.log(`RecoverX API listening on http://localhost:${port}`));
+  const server = createServer(app);
+  const realtime = createSosRealtime(server, allowedOrigins);
+  setAdminSosNotifier(realtime.notifyAdmins);
+  server.listen(port, () => console.log(`RecoverX API listening on http://localhost:${port}`));
 }
 function cryptoRandom() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }

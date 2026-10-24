@@ -45,3 +45,20 @@ Alternatively, service accounts can upload only to a folder in a Google Shared D
 Evidence uploaded before Google Drive was configured remains in local development storage and is not moved automatically. If a local copy is missing, ask the complainant to upload the original file again.
 
 Upload limits are enforced in both the UI and server: JPG/JPEG/PNG up to 500 KiB; PDF up to 2 MiB.
+
+## SOS fraud alert API
+Before using SOS routes, review `backend/prisma/migrations/20261024010000_sos_alerts/migration.sql`, then apply it from `backend` with `npm run db:deploy`. Do not reset the database. The endpoints require the existing HTTP-only session cookie; citizen ownership and staff roles are validated server-side.
+
+| Method | Endpoint | Access |
+|---|---|---|
+| `POST` | `/api/sos/alerts` | Citizen; JSON alert with an `Idempotency-Key` header |
+| `GET` | `/api/sos/alerts` | Citizen; own alerts |
+| `GET` | `/api/sos/alerts/:id` | Citizen; own alert status/history |
+| `GET` | `/api/sos/admin/alerts` | `ADMIN` / `INVESTIGATOR`; recent alert list and aggregate counts |
+| `GET` | `/api/sos/admin/alerts/:id` | `ADMIN` / `INVESTIGATOR`; alert detail and audit history |
+| `POST` | `/api/sos/admin/alerts/:id/acknowledge` | `ADMIN` / `INVESTIGATOR`; acknowledge a new alert |
+| `PATCH` | `/api/sos/admin/alerts/:id/status` | `ADMIN` / `INVESTIGATOR`; set `New`, `Acknowledged`, `In Progress`, or `Resolved` |
+
+The request contains `category`, ISO-8601 `incidentAt`, optional numeric `amount`, `description`, and `contactPhone`. The server assigns the citizen ID from the authenticated session; client-supplied IDs are rejected. Reusing an idempotency key with the same payload returns the existing alert; reusing it with a different payload returns `409 Conflict`. Creation is rate limited and the alert plus initial history record are committed in one transaction.
+
+On a persistent Node.js backend, authenticated admin Socket.IO clients receive `sos:new-alert` only after the database transaction commits. Socket connections use the same session cookie and only `ADMIN` / `INVESTIGATOR` users join the authorized notification room. The dashboard fetches stored alerts on initial load and reconnect; duplicate event IDs do not replay the buzzer. Audio requires an explicit user gesture and is not the sole alert channel. Socket.IO is not available through the existing Vercel serverless export; deploy the backend to a persistent Node.js service to use live events.
