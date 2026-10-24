@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./config/env.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -10,6 +10,7 @@ import { z } from "zod";
 import { fileTypeFromBuffer } from "file-type";
 import { prisma } from "./db.js";
 import { clearSessionCookie, requireAuth, requireAdmin, setSessionCookie } from "./middleware/auth.js";
+import { FirebaseAuthSetupError, verifyFirebaseIdToken } from "./services/firebase-auth.js";
 import { deleteEvidence, DriveStorageError, readEvidence, saveEvidence, storageProvider, verifyDriveConnection } from "./services/storage.js";
 import { createServer } from "node:http";
 import { createSosAlertRouter } from "./routes/sosAlerts.js";
@@ -86,13 +87,105 @@ app.post("/api/auth/login", async (req, res, next) => {
     const lookupEmail = isAdminAlias ? process.env.ADMIN_EMAIL?.toLowerCase() : identifier.toLowerCase();
     if (!lookupEmail || (!isAdminAlias && !lookupEmail.includes("@"))) return res.status(401).json({ error: "Username/email or password is incorrect." });
     const userRecord = await prisma.user.findUnique({ where: { email: lookupEmail } });
-    if (!userRecord || !(await bcrypt.compare(parsed.data.password, userRecord.passwordHash))) return res.status(401).json({ error: "Username/email or password is incorrect." });
+    if (!userRecord?.passwordHash || !(await bcrypt.compare(parsed.data.password, userRecord.passwordHash))) return res.status(401).json({ error: "Username/email or password is incorrect." });
     const isStaff = userRecord.role === "ADMIN" || userRecord.role === "INVESTIGATOR";
     if (parsed.data.requestedRole === "ADMIN" && !isStaff) return res.status(403).json({ error: "This account is not authorized for the admin workspace." });
     if (parsed.data.requestedRole === "CITIZEN" && isStaff) return res.status(403).json({ error: "Choose Admin for this account to continue." });
     setSessionCookie(res, userRecord.id);
     res.json({ user: { id: userRecord.id, name: userRecord.name, email: userRecord.email, role: userRecord.role } });
   } catch (e) { next(e); }
+});
+app.post("/api/auth/firebase", async (req, res, next) => {
+  try {
+    const parsed = z.object({
+      idToken: z.string().min(1).max(10_000),
+      name: z.string().trim().min(2).max(80).optional()
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "A valid Firebase sign-in token is required." });
+
+    let claims;
+    try {
+      claims = await verifyFirebaseIdToken(parsed.data.idToken);
+    } catch (error) {
+      if (error instanceof FirebaseAuthSetupError) return res.status(503).json({ error: error.message });
+      console.warn("Firebase sign-in token verification failed.");
+      return res.status(401).json({ error: "Google or phone verification failed. Please sign in again." });
+    }
+
+    const signInProvider = claims.firebase?.sign_in_provider;
+    if (signInProvider !== "google.com" && signInProvider !== "phone") {
+      return res.status(403).json({ error: "Use a verified Google account or phone number to continue." });
+    }
+    const email = claims.email?.trim().toLowerCase() || null;
+    const phoneNumber = claims.phone_number || null;
+    if (signInProvider === "google.com" && (!email || claims.email_verified !== true)) {
+      return res.status(403).json({ error: "Google must provide a verified email address." });
+    }
+    if (signInProvider === "phone" && !phoneNumber) {
+      return res.status(403).json({ error: "The verified phone number is missing from the sign-in token." });
+    }
+
+    let user = await prisma.user.findUnique({ where: { firebaseUid: claims.uid } });
+    if (user?.role === "ADMIN" || user?.role === "INVESTIGATOR") {
+      return res.status(403).json({ error: "Staff accounts must use the authorized admin sign-in method." });
+    }
+
+    if (!user && email) {
+      user = await prisma.user.findUnique({ where: { email } });
+      if (user?.role === "ADMIN" || user?.role === "INVESTIGATOR") {
+        return res.status(403).json({ error: "Staff accounts must use the authorized admin sign-in method." });
+      }
+      if (user?.firebaseUid && user.firebaseUid !== claims.uid) {
+        return res.status(409).json({ error: "This email is linked to a different verified sign-in. Sign in using the method already connected to your account." });
+      }
+    }
+
+    if (phoneNumber) {
+      const existingPhone = await prisma.user.findUnique({ where: { phoneNumber }, select: { id: true } });
+      if (existingPhone && existingPhone.id !== user?.id) {
+        return res.status(409).json({ error: "This verified phone number is already linked to another account." });
+      }
+    }
+
+    if (user) {
+      const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          firebaseUid: claims.uid,
+          ...(email && !user.email ? { email } : {}),
+          ...(phoneNumber && !user.phoneNumber ? { phoneNumber } : {}),
+          ...(user.passwordHash ? {} : { name: parsed.data.name || claims.name || user.name })
+        },
+        select: { id: true, name: true, email: true, role: true }
+      });
+      setSessionCookie(res, updated.id);
+      return res.json({ user: updated });
+    }
+
+    const name = parsed.data.name || claims.name || (email ? email.split("@")[0] : "");
+    if (name.trim().length < 2) {
+      return res.status(400).json({ error: "Enter your name to create an account with this phone number." });
+    }
+    const created = await prisma.user.create({
+      data: {
+        name: name.trim(),
+        email,
+        passwordHash: null,
+        firebaseUid: claims.uid,
+        phoneNumber,
+        role: "CITIZEN"
+      },
+      select: { id: true, name: true, email: true, role: true }
+    });
+    setSessionCookie(res, created.id);
+    res.status(201).json({ user: created });
+  } catch (error) {
+    if (error instanceof FirebaseAuthSetupError) return res.status(503).json({ error: error.message });
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
+      return res.status(409).json({ error: "This Google account or phone number is already linked to another account." });
+    }
+    next(error);
+  }
 });
 app.post("/api/auth/logout", (_req, res) => { clearSessionCookie(res); res.status(204).end(); });
 app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: req.user }));

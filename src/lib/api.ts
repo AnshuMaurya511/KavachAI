@@ -19,7 +19,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return data as T;
 }
 
-export type ApiUser = { id: string; name: string; email: string; role?: "CITIZEN" | "INVESTIGATOR" | "ADMIN" };
+export type ApiUser = { id: string; name: string; email: string | null; role?: "CITIZEN" | "INVESTIGATOR" | "ADMIN" };
 export type ApiCase = {
   id: string;
   reference: string;

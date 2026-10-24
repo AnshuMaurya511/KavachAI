@@ -18,6 +18,8 @@ npm run dev
 ```
 API health: `GET http://localhost:4000/api/health`
 
+When starting the backend from `backend`, its environment loader reads `backend/.env` first and then fills missing values from the project root `.env`. Existing backend values take precedence.
+
 For Neon/serverless deployment, use the pooled URL for `DATABASE_URL` and the direct/unpooled URL for `DIRECT_URL`.
 
 ## Google Drive setup
@@ -29,7 +31,7 @@ For Neon/serverless deployment, use the pooled URL for `DATABASE_URL` and the di
 Keep the destination private; the API does not make uploaded evidence public.
 
 ## Main endpoints
-- `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`
+- `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/firebase` (verified Firebase Google/phone sign-in), `POST /api/auth/logout`, `GET /api/auth/me`
 - `GET/POST /api/cases`, `GET/PATCH/DELETE /api/cases/:id`
 - `GET/POST /api/cases/:id/timeline`
 - `GET/POST /api/cases/:id/evidence`
@@ -45,3 +47,5 @@ Keep the destination private; the API does not make uploaded evidence public.
 
 ## Important
 Local storage is for development only. For production, use HTTPS, a strong secret manager, a dedicated Google Workspace/Shared Drive policy, backups, monitoring, malware scanning, retention controls, and privacy/legal review. Review the Google Drive account's permissions and data residency needs before storing sensitive evidence.
+
+Google and phone authentication setup, Firebase service-account requirements, and migration instructions are documented in `../AUTHENTICATION_SETUP.md`.

@@ -9,8 +9,10 @@ datasource db {
 model User {
   id String @id @default(cuid())
   name String
-  email String @unique
-  passwordHash String
+  email String? @unique
+  passwordHash String?
+  firebaseUid String? @unique
+  phoneNumber String? @unique
   role String @default("CITIZEN")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
