@@ -54,6 +54,20 @@ async function playBuzzer() {
   }
 }
 
+function speakAnnouncement(message: string): Promise<void> {
+  if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+    return Promise.reject(new Error("This browser does not support voice announcements."));
+  }
+  const utterance = new SpeechSynthesisUtterance(message);
+  utterance.lang = "en-IN";
+  utterance.rate = 0.95;
+  return new Promise((resolve, reject) => {
+    utterance.onend = () => resolve();
+    utterance.onerror = () => reject(new Error("The browser could not play the voice announcement."));
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
 const formatTimestamp = (value: string) => new Date(value).toLocaleString("en-IN", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -71,20 +85,25 @@ export function SosAdminPage() {
   const [newAlert, setNewAlert] = useState<IncomingAlert | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [muted, setMuted] = useState(() => {
     try { return localStorage.getItem("recoverx-sos-admin-muted") === "true"; } catch { return false; }
   });
   const [soundError, setSoundError] = useState("");
+  const [voiceError, setVoiceError] = useState("");
   const knownIds = useRef(new Set<string>());
   const soundedIds = useRef(new Set<string>());
+  const voicedIds = useRef(new Set<string>());
   const busyIds = useRef(new Set<string>());
   const soundEnabledRef = useRef(false);
+  const voiceEnabledRef = useRef(false);
   const mutedRef = useRef(muted);
 
   useEffect(() => {
     soundEnabledRef.current = soundEnabled;
+    voiceEnabledRef.current = voiceEnabled;
     mutedRef.current = muted;
-  }, [soundEnabled, muted]);
+  }, [soundEnabled, voiceEnabled, muted]);
 
   const loadAlerts = useCallback(async (initial = false) => {
     if (initial) setLoading(true);
@@ -124,6 +143,12 @@ export function SosAdminPage() {
       setNewAlert(alert);
       setNotice(`New SOS alert received: ${alert.reference}`);
       void loadAlerts();
+      if (voiceEnabledRef.current && !voicedIds.current.has(alert.id)) {
+        voicedIds.current.add(alert.id);
+        void speakAnnouncement(`New SOS alert received. Reference ${alert.reference}. Category: ${alert.category}.`).catch(announcementError => {
+          setVoiceError(announcementError instanceof Error ? announcementError.message : "Could not play the voice announcement.");
+        });
+      }
       if (!soundEnabledRef.current || mutedRef.current || soundedIds.current.has(alert.id)) return;
       soundedIds.current.add(alert.id);
       void playBuzzer().catch(() => {
@@ -141,6 +166,25 @@ export function SosAdminPage() {
     } catch (audioError) {
       setSoundError(audioError instanceof Error ? audioError.message : "Could not enable alert audio.");
     }
+  }
+
+  async function enableVoice() {
+    setVoiceError("");
+    try {
+      await speakAnnouncement("Voice announcements enabled.");
+      voiceEnabledRef.current = true;
+      setVoiceEnabled(true);
+    } catch (announcementError) {
+      setVoiceError(announcementError instanceof Error ? announcementError.message : "Could not enable voice announcements.");
+    }
+  }
+
+  function toggleVoice() {
+    const next = !voiceEnabled;
+    voiceEnabledRef.current = next;
+    setVoiceEnabled(next);
+    setVoiceError("");
+    if (!next && "speechSynthesis" in window) window.speechSynthesis.cancel();
   }
 
   function toggleMute() {
@@ -195,8 +239,13 @@ export function SosAdminPage() {
         ? <button type="button" className="btn secondary" onClick={() => void enableSound()}><Volume2 size={16}/>Enable buzzer</button>
         : <button type="button" className="btn secondary" onClick={toggleMute} aria-pressed={muted}>{muted ? <VolumeX size={16}/> : <Volume2 size={16} />}{muted ? "Unmute buzzer" : "Mute buzzer"}</button>}
       <span className="sos-admin-sound-label">{!soundEnabled ? "Browser audio needs a click to enable." : muted ? "Buzzer is muted." : "Buzzer enabled."}</span>
+      {!voiceEnabled
+        ? <button type="button" className="btn secondary" onClick={() => void enableVoice()}><Volume2 size={16}/>Enable voice alerts</button>
+        : <button type="button" className="btn secondary" onClick={toggleVoice} aria-pressed={voiceEnabled}><VolumeX size={16}/>Mute voice alerts</button>}
+      <span className="sos-admin-sound-label">{voiceEnabled ? "Voice announcements enabled." : "Voice announcements need a click to enable."}</span>
     </div>
     {soundError && <p className="error" role="status">{soundError}</p>}
+    {voiceError && <p className="error" role="status">{voiceError}</p>}
     {notice && <div className="sos-live-notice" role="status" aria-live="polite"><BellRing size={18}/><span>{notice}</span><button className="icon" type="button" onClick={() => setNotice("")} aria-label="Dismiss alert notification">×</button></div>}
     {newAlert && <div className="sos-new-alert" role="alert"><CircleAlert size={20}/><div><b>New SOS alert: {newAlert.reference}</b><small>{newAlert.category} · {formatTimestamp(newAlert.createdAt)}</small></div></div>}
     {error && <p className="error" role="alert">{error}</p>}
