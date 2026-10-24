@@ -26,6 +26,13 @@ Backend health endpoint: `http://localhost:4000/api/health`.
 Set the frontend API URL in root `.env` if needed:
 `VITE_API_BASE_URL=http://localhost:4000/api`
 
+## Deploy frontend and backend
+The root `vercel.json` configures the Vite frontend. Deploy it to Vercel with the repository root as its Root Directory, `npm run build` as its build command, and `dist` as its output directory.
+
+Deploy the Express API to Render using the root `render.yaml` Blueprint. It sets the service Root Directory to `backend`, installs backend development dependencies needed by Prisma and TypeScript, builds with the backend package scripts, and starts the API with `npm start`. Set `DATABASE_URL`, `DIRECT_URL`, and `JWT_SECRET` in the Render service environment; configure `FRONTEND_ORIGIN` with the deployed frontend origin. Add Google Drive environment variables there if Drive storage is enabled. Do not add secrets to `render.yaml` or commit `.env` files.
+
+Set `VITE_API_BASE_URL` in the Vercel frontend project to the deployed API base URL ending in `/api`, and redeploy the frontend. The Vercel API rewrite in `vercel.json` is an alternative same-origin proxy; if using it, replace its placeholder backend hostname with the Render service hostname. Keep the backend on Render for persistent Socket.IO notifications.
+
 ## Evidence storage
 Evidence upload limits are enforced in UI and API:
 - JPG/JPEG/PNG: maximum 500 KiB per file
